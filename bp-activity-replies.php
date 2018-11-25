@@ -12,7 +12,7 @@
  * Plugin Name:       BP Activity Replies
  * Plugin URI:        http://imathi.eu/tag/rustine
  * Description:       Brings screen notifications when a BuddyPress activity is commented
- * Version:           1.0.0-alpha
+ * Version:           1.0.1
  * Author:            imath
  * Author URI:        http://imathi.eu/
  * Text Domain:       bp-activity-replies
@@ -62,7 +62,7 @@ class BP_Activity_Replies {
 
 		/** Plugin specific globals ***************************************************/
 
-		$this->version  = '1.0.0-alpha';
+		$this->version  = '1.0.1';
 		$this->domain   = 'bp-activity-replies';
 		$this->basename = plugin_basename( __FILE__ );
 
@@ -74,7 +74,7 @@ class BP_Activity_Replies {
 		/** BuddyPress specific globals ***********************************************/
 
 		// Required version
-		$this->bp_version = '2.1';
+		$this->bp_version = '2.6';
 
 		// Version which fixed the ticket
 		$this->bp_fixed   = '';
@@ -125,14 +125,8 @@ class BP_Activity_Replies {
 		add_filter( 'bp_activity_paged_activities_sql',    array( $this, 'adjust_select_activities'), 10, 2 );
 		add_filter( 'bp_activity_total_activities_sql',    array( $this, 'adjust_count_activities'),  10, 1 );
 
-
 		// Activity comment notifications
-		add_filter( 'bp_notifications_get_registered_components',   array( $this, 'notifications_component' ),               10, 1 );
-		add_action( 'bp_activity_comment_posted',                   array( $this, 'screen_notifications' ),                  10, 2 );
-		add_filter( 'bp_notifications_get_notifications_for_user',  array( $this, 'format_notifications'),                   10, 5 );
-		add_action( 'bp_activity_replies_member_screen',            array( $this, 'do_activity_replies_actions' ),           10    );
-		add_action( 'bp_activity_screen_single_activity_permalink', array( $this, 'do_single_activity_replies_actions' ),    10, 1 );
-		add_action( 'bp_activity_deleted_activities',               array( $this, 'delete_activity_replies_notifications' ), 10, 1 );
+		add_action( 'bp_activity_replies_member_screen', array( $this, 'do_activity_replies_actions' ), 10 );
 
 		// Activity Template
 		add_filter( 'bp_get_activity_show_filters_options', array( $this, 'actions_for_replies_context' ), 10, 1 );
@@ -350,146 +344,6 @@ class BP_Activity_Replies {
 	}
 
 	/**
-	 * Record a screen notification once an activity has been commented
-	 * or once a comment has been replied to.
-	 */
-	public function screen_notifications( $comment_id = 0, $args = array() ) {
-		if ( empty( $comment_id ) || empty( $args['activity_id'] ) ) {
-			return;
-		}
-
-		$bp = buddypress();
-
-		// Set reply object
-		$reply = (object) $args;
-		$reply->id = $comment_id;
-
-		$activity = new BP_Activity_Activity( $reply->activity_id );
-
-		// Do not record a notification if no activity found
-		if ( empty( $activity->id ) ) {
-			return;
-		}
-
-		// Always notify the main activity author, if not the one who commented
-		if ( $activity->user_id != $reply->user_id && bp_is_active( 'notifications' ) ) {
-			bp_notifications_add_notification( array(
-				'user_id'           => $activity->user_id,
-				'item_id'           => $reply->id,
-				'secondary_item_id' => $reply->user_id,
-				'component_name'    => $this->component_id,
-				'component_action'  => 'new_activity_comment'
-			) );
-		}
-
-		// Stop here if it's not a reply to another comment
-		if ( empty( $reply->parent_id ) || ( $reply->activity_id == $reply->parent_id ) ) {
-			return;
-		}
-
-		$comment = new BP_Activity_Activity( $reply->parent_id );
-
-		// Do not record a notification if commenter == author
-		if ( empty( $comment->id ) || $comment->user_id == $reply->user_id || $activity->user_id == $comment->user_id ) {
-			return;
-		}
-
-		if ( bp_is_active( 'notifications' ) ) {
-			bp_notifications_add_notification( array(
-				'user_id'           => $comment->user_id,
-				'item_id'           => $reply->id,
-				'secondary_item_id' => $reply->user_id,
-				'component_name'    => $this->component_id,
-				'component_action'  => 'new_activity_comment_reply'
-			) );
-		}
-	}
-
-	/**
-	 * We need to fake a component as BuddyPress only provide an
-	 * action in bp_activity_format_notifications() which avoids the
-	 * display of the links into the WP Admin Bar.
-	 *
-	 * Ideally the switch case should include a default case containing
-	 * a filter to let plugins easily add their custom actions to the
-	 * activity component.
-	 */
-	public function notifications_component( $components = array() ) {
-		$components[] = $this->component_id;
-		return $components;
-	}
-
-	/**
-	 * Format the notifications for the notification screen & the WP Admin Bar
-	 */
-	public function format_notifications( $action = '', $item_id = 0, $secondary_item_id = 0, $total_items = 0, $format = 'string' ) {
-		// Targetted actions
-		$actions = array(
-			'new_activity_comment'       => 1,
-			'new_activity_comment_reply' => 1,
-		);
-
-		// Is it one of the targetted actions ?
-		if ( ! isset( $actions[ $action ] ) ) {
-			// Return unchanged ref array
-			return array(
-				$action,
-				$item_id,
-				$secondary_item_id,
-				$total_items,
-				$format
-			);
-		}
-
-		$is_read_screen = bp_is_user_notifications() && bp_is_current_action( 'read' );
-
-		// Main user's activity link
-		$activity_link = trailingslashit( bp_loggedin_user_domain() . bp_get_activity_slug() );
-
-		// Permalink to the activity
-		$notification_link  = bp_activity_get_permalink( $item_id );
-
-		// If not on read screen append a query var
-		if ( ! $is_read_screen ) {
-			$notification_link = add_query_arg( array('reply' => $item_id ), $notification_link );
-		}
-
-		$notification_title = __( 'New activity comment', 'bp-activity-replies' );
-
-		if ( (int) $total_items > 1 ) {
-			$text = sprintf( __( 'You have %1$d new replies to one of your updates', 'bp-activity-replies' ), (int) $total_items );
-
-			if ( 'new_activity_comment_reply' == $action ) {
-				$text = sprintf( __( 'You have %1$d new replies to one of your comments', 'bp-activity-replies' ), (int) $total_items );
-			}
-
-			// More than one use the replies subnav
-			$notification_link = trailingslashit( $activity_link . $this->slug );
-
-			// If not on read screen append a query var
-			if ( ! $is_read_screen ) {
-				$notification_link = add_query_arg( array( 'n' => $total_items ), $notification_link );
-			}
-		} else {
-			$user_fullname = bp_core_get_user_displayname( $secondary_item_id );
-			$text =  sprintf( __( '%1$s replied to one of your updates', 'bp-activity-replies' ), $user_fullname );
-
-			if ( 'new_activity_comment_reply' == $action ) {
-				$text = sprintf( __( '%1$s replied to one of your comments', 'bp-activity-replies' ), $user_fullname );
-			}
-		}
-
-		if ( 'string' == $format ) {
-			return '<a href="' . esc_url( $notification_link ) . '" title="' . esc_attr( $notification_title ) . '">' . esc_html( $text ) . '</a>';
-		} else {
-			return array(
-				'text' => $text,
-				'link' => $notification_link,
-			);
-		}
-	}
-
-	/**
 	 * Mark notifications as read (if any) on the user's activity replies screen
 	 */
 	public function do_activity_replies_actions() {
@@ -497,43 +351,29 @@ class BP_Activity_Replies {
 			return;
 		}
 
-		if ( isset( $_GET['n'] ) ) {
-			// Get all notifications, as the function is caching its data, no extra queries :)
-			$notifications = bp_notifications_get_all_notifications_for_user( bp_loggedin_user_id() );
+		// Get all notifications, as the function is caching its data, no extra queries :)
+		$notifications = bp_notifications_get_all_notifications_for_user( bp_loggedin_user_id() );
 
+		$update_replies = wp_filter_object_list( $notifications, array( 'component_action' => 'update_reply' ), 'and', 'item_id' );
+		$comment_replies = wp_filter_object_list( $notifications, array( 'component_action' => 'comment_reply' ), 'and', 'item_id' );
+
+		$new_replies = array_merge( $update_replies, $comment_replies );
+
+		if ( $new_replies ) {
 			// Catch an array of the latest replies
-			$this->new_replies = wp_filter_object_list( $notifications, array( 'component_name' => $this->component_id ), 'and', 'item_id' );
+			$this->new_replies = $new_replies;
 
 			// Add one css rule if needed
 			add_action( 'wp_head', array( $this, 'print_style' ) );
-
-			// Mark all notifications as read
-			bp_notifications_mark_notifications_by_type( bp_loggedin_user_id(), $this->component_id, '' );
-		}
-	}
-
-	/**
-	 * Mark notifications as read (if any) on the single activity
-	 */
-	public function do_single_activity_replies_actions( $activity ) {
-		if ( ! bp_is_active( 'notifications' ) || ! is_user_logged_in() || ! isset( $_GET['reply'] ) ) {
-			return;
 		}
 
-		// Mark as read any reply notifications for the current user related to this activity
-		bp_notifications_mark_notifications_by_item_id( bp_loggedin_user_id(), (int) $_GET['reply'], $this->component_id, '' );
-	}
-
-	/**
-	 * Delete all notifications when the activity is deleted
-	 */
-	function delete_activity_replies_notifications( $activity_ids_deleted = array() ) {
-		if ( ! bp_is_active( 'notifications' ) || empty( $activity_ids_deleted ) ) {
-			return;
+		// Mark all notifications as read
+		if ( $update_replies ) {
+			bp_notifications_mark_notifications_by_type( bp_loggedin_user_id(), 'activity', 'update_reply' );
 		}
 
-		foreach ( $activity_ids_deleted as $activity_id ) {
-			bp_notifications_delete_all_notifications_by_type( $activity_id, $this->component_id );
+		if ( $comment_replies ) {
+			bp_notifications_mark_notifications_by_type( bp_loggedin_user_id(), 'activity', 'comment_reply' );
 		}
 	}
 
