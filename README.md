@@ -1,6 +1,8 @@
 BuddyPress Activity Replies
 ===========================
 
+**This WP/BP Plugin is no more supported and this repository is now archived.**
+
 + Screen Notifications when a comment/reply is added to an activity
 + Member's replies activity subnav to list all replies added to the displayed member activities
 
